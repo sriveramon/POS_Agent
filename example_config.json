@@ -1,0 +1,17 @@
+{
+    "rabbitmq_url": "",
+    "queue_name": "",
+    "printers": {
+        "cachier_printer": {
+            "type": "",
+            "vendor_id": "",
+            "product_id": ""
+        },
+        "kitchen_printer": {
+            "type": "",
+            "vendor_id": "",
+            "product_id": ""
+        }
+    }
+}
+

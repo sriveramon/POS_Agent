@@ -1,0 +1,9 @@
+*.spec
+build
+dist
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.db
+config.json
