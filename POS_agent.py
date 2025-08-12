@@ -80,7 +80,7 @@ def on_message(ch, method, properties, body):
                 ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
         else:
             print(f"Unknown printer_id: {printer_id} -- Skipping")
-            ch.basic_ack(delivery_tag=method.delivery_tag)
+            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
     except Exception as e:
         print(f"Error processing message: {e}")
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
