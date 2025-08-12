@@ -4,8 +4,10 @@ from escpos.printer import Usb, Network
 import sys
 import os
 
+# Windows printer by name (requires pywin32)
+import win32print
+
 def load_config(filename="config.json"):
-    # Always load config.json from the directory containing the executable
     exe_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
     path = os.path.join(exe_dir, filename)
     try:
@@ -24,27 +26,38 @@ RABBITMQ_URL = config["rabbitmq_url"]
 QUEUE_NAME = config["queue_name"]
 PRINTERS = config["printers"]
 
-config = load_config()
-RABBITMQ_URL = config["rabbitmq_url"]
-QUEUE_NAME = config["queue_name"]
-PRINTERS = config["printers"]
-
 def print_receipt(text, printer_cfg, printer_id=None):
     try:
         if printer_cfg["type"] == "usb":
             vendor_id = int(printer_cfg["vendor_id"], 16)
             product_id = int(printer_cfg["product_id"], 16)
             p = Usb(vendor_id, product_id)
+            p.text(text)
+            p.set()
+            p.cut()
+            p.close()
         elif printer_cfg["type"] == "network":
             p = Network(printer_cfg["host"], port=printer_cfg.get("port", 9100))
+            p.text(text)
+            p.set()
+            p.cut()
+            p.close()
+        elif printer_cfg["type"] == "windows":
+            
+            printer_name = printer_cfg["name"]
+            hPrinter = win32print.OpenPrinter(printer_name)
+            try:
+                hJob = win32print.StartDocPrinter(hPrinter, 1, ("Receipt", None, "RAW"))
+                win32print.StartPagePrinter(hPrinter)
+                win32print.WritePrinter(hPrinter, text.encode("utf-8"))
+                win32print.EndPagePrinter(hPrinter)
+                win32print.EndDocPrinter(hPrinter)
+            finally:
+                win32print.ClosePrinter(hPrinter)
         else:
             print(f"Unknown printer type: {printer_cfg['type']}")
             return False
 
-        p.text(text)
-        p.set()  # Reset formatting to normal (optional)
-        p.cut()
-        p.close()
         print(f"Printed on {printer_cfg}")
         return True
     except Exception as e:
