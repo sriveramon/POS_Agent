@@ -50,6 +50,7 @@ def print_receipt(text, printer_cfg, printer_id=None):
                 hJob = win32print.StartDocPrinter(hPrinter, 1, ("Receipt", None, "RAW"))
                 win32print.StartPagePrinter(hPrinter)
                 win32print.WritePrinter(hPrinter, text.encode("utf-8"))
+                win32print.WritePrinter(hPrinter, b'\x1dV\x00')
                 win32print.EndPagePrinter(hPrinter)
                 win32print.EndDocPrinter(hPrinter)
             finally:
