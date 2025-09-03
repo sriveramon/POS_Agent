@@ -24,8 +24,8 @@ def fetch_printers(base_url, token):
         resp = requests.get(url, headers=headers)
         resp.raise_for_status()
         printers = resp.json()
-        # Build a dict with printer.name as key, and all printer info as value
-        return {p["name"]: p for p in printers}
+        # Build a dict with printer.name as key, and connection_data as value
+        return {p["name"]: p["connection_data"] for p in printers}
     except Exception as e:
         print(f"Failed to fetch printers: {e}")
         sys.exit(1)
@@ -46,8 +46,10 @@ def load_config(filename="config.json"):
 
 def print_receipt(text, printer_cfg, printer_id=None):
     try:
-        print(f"Printing on printer '{printer_id}' with config: {printer_cfg}")
+        print(f"Printing on (printer_id={printer_id}) with connection_data={printer_cfg}")
         print(f"{text}")
+        # Here you can add logic to use escpos.printer according to printer_cfg
+        # For demonstration, just printing to stdout
         return True
     except Exception as e:
         print(f"Error printing: {e}")
@@ -84,7 +86,7 @@ def main():
     token = get_access_token(base_url, password)
     global PRINTERS
     PRINTERS = fetch_printers(base_url, token)
-    print(f"Available printers by name: {list(PRINTERS.keys())}")
+    print(f"Available printers: {PRINTERS}")
 
     params = pika.URLParameters(RABBITMQ_URL)
     connection = pika.BlockingConnection(params)

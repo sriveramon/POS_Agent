@@ -1,34 +1,11 @@
 import pika
 import json
-import requests
+from escpos.printer import Usb, Network
 import sys
 import os
-from escpos.printer import Usb, Network
 
-def get_access_token(base_url, password):
-    url = f"{base_url}/auth/login"
-    payload = {"password": password}
-    try:
-        resp = requests.post(url, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-        return data["access_token"]
-    except Exception as e:
-        print(f"Failed to login: {e}")
-        sys.exit(1)
-
-def fetch_printers(base_url, token):
-    url = f"{base_url}/printers/"
-    headers = {"Authorization": f"Bearer {token}"}
-    try:
-        resp = requests.get(url, headers=headers)
-        resp.raise_for_status()
-        printers = resp.json()
-        # Build a dict with printer.name as key, and all printer info as value
-        return {p["name"]: p for p in printers}
-    except Exception as e:
-        print(f"Failed to fetch printers: {e}")
-        sys.exit(1)
+# Windows printer by name (requires pywin32)
+import win32print
 
 def load_config(filename="config.json"):
     exe_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
@@ -44,10 +21,45 @@ def load_config(filename="config.json"):
         print(f"Failed to load '{filename}': {e}")
         sys.exit(1)
 
+config = load_config()
+RABBITMQ_URL = config["rabbitmq_url"]
+QUEUE_NAME = config["queue_name"]
+PRINTERS = config["printers"]
+
 def print_receipt(text, printer_cfg, printer_id=None):
     try:
-        print(f"Printing on printer '{printer_id}' with config: {printer_cfg}")
-        print(f"{text}")
+        if printer_cfg["type"] == "usb":
+            vendor_id = int(printer_cfg["vendor_id"], 16)
+            product_id = int(printer_cfg["product_id"], 16)
+            p = Usb(vendor_id, product_id)
+            p.text(text)
+            p.set()
+            p.cut()
+            p.close()
+        elif printer_cfg["type"] == "network":
+            p = Network(printer_cfg["host"], port=printer_cfg.get("port", 9100))
+            p.text(text)
+            p.set()
+            p.cut()
+            p.close()
+        elif printer_cfg["type"] == "windows":
+            
+            printer_name = printer_cfg["name"]
+            hPrinter = win32print.OpenPrinter(printer_name)
+            try:
+                hJob = win32print.StartDocPrinter(hPrinter, 1, ("Receipt", None, "RAW"))
+                win32print.StartPagePrinter(hPrinter)
+                win32print.WritePrinter(hPrinter, text.encode("utf-8"))
+                win32print.WritePrinter(hPrinter, b'\x1dV\x00')
+                win32print.EndPagePrinter(hPrinter)
+                win32print.EndDocPrinter(hPrinter)
+            finally:
+                win32print.ClosePrinter(hPrinter)
+        else:
+            print(f"Unknown printer type: {printer_cfg['type']}")
+            return False
+
+        print(f"Printed on {printer_cfg}")
         return True
     except Exception as e:
         print(f"Error printing: {e}")
@@ -75,17 +87,6 @@ def on_message(ch, method, properties, body):
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
 
 def main():
-    config = load_config()
-    base_url = config["base_url"]
-    password = config["password"]      # Add password to your config.json or set it in code
-    RABBITMQ_URL = config["rabbitmq_url"]
-    QUEUE_NAME = config["queue_name"]
-
-    token = get_access_token(base_url, password)
-    global PRINTERS
-    PRINTERS = fetch_printers(base_url, token)
-    print(f"Available printers by name: {list(PRINTERS.keys())}")
-
     params = pika.URLParameters(RABBITMQ_URL)
     connection = pika.BlockingConnection(params)
     channel = connection.channel()

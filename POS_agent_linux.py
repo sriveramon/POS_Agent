@@ -3,7 +3,14 @@ import json
 import requests
 import sys
 import os
-from escpos.printer import Usb, Network
+from escpos.printer import Usb, Network, Bluetooth
+
+# Try to import Bluetooth printer class if available
+try:
+    from escpos.printer import Bluetooth
+    BLUETOOTH_AVAILABLE = True
+except ImportError:
+    BLUETOOTH_AVAILABLE = False
 
 def get_access_token(base_url, password):
     url = f"{base_url}/auth/login"
@@ -46,8 +53,34 @@ def load_config(filename="config.json"):
 
 def print_receipt(text, printer_cfg, printer_id=None):
     try:
-        print(f"Printing on printer '{printer_id}' with config: {printer_cfg}")
-        print(f"{text}")
+        printer_type = printer_cfg.get("type")
+        conn = printer_cfg.get("connection_data", {})
+        if printer_type == "usb":
+            vendor_id = int(conn["vendor_id"], 16)
+            product_id = int(conn["product_id"], 16)
+            p = Usb(vendor_id, product_id)
+        elif printer_type == "network":
+            host = conn.get("ip_address") or conn.get("host")
+            port = int(conn.get("port", 9100))
+            p = Network(host, port=port)
+        elif printer_type == "bluetooth":
+            if not BLUETOOTH_AVAILABLE:
+                print("Bluetooth printer class is not available. Install python-escpos with bluetooth support.")
+                return False
+            mac_address = conn.get("mac_address")
+            if not mac_address:
+                print("Bluetooth printer: No mac_address provided in connection_data.")
+                return False
+            p = Bluetooth(mac_address)
+        else:
+            print(f"Unknown printer type: {printer_type}")
+            return False
+
+        p.text(text)
+        p.set()  # Optional: Reset formatting
+        p.cut()
+        p.close()
+        print(f"Printed on printer '{printer_id}' with config: {printer_cfg}")
         return True
     except Exception as e:
         print(f"Error printing: {e}")
