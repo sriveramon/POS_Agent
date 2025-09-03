@@ -7,3 +7,4 @@ __pycache__
 *.pyd
 *.db
 config.json
+old_config.json
