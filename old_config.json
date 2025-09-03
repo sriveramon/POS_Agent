@@ -1,15 +1,1 @@
-{
-  "rabbitmq_url": "amqp://4taLJvcPUfNN8rXp:VAjmx1.CKeDI7z~pJA4Tv-YWXC6NMck-@switchyard.proxy.rlwy.net:38787",
-  "queue_name": "dev_print_jobs",
-  "printers": {
-    "cachier_printer": {
-      "type": "usb",
-      "vendor_id": "0x04b8",
-      "product_id": "0x0e28"
-    },
-    "kitchen_printer": {
-      "type": "windows",
-      "name": "POSPrinter"
-    }
-  }
-}
+
