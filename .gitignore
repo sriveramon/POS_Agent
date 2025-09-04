@@ -8,3 +8,4 @@ __pycache__
 *.db
 config.json
 old_config.json
+pizzaCenter_config_json
