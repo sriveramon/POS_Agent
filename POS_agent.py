@@ -3,6 +3,7 @@ import json
 import requests
 import sys
 import os
+import time
 from escpos.printer import Usb, Network
 
 # Windows printer by name (requires pywin32)
@@ -118,6 +119,23 @@ def on_message(ch, method, properties, body):
         print(f"Error processing message: {e}")
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
 
+def start_rabbitmq_consumer(RABBITMQ_URL, QUEUE_NAME):
+    while True:
+        try:
+            params = pika.URLParameters(RABBITMQ_URL)
+            connection = pika.BlockingConnection(params)
+            channel = connection.channel()
+            channel.queue_declare(queue=QUEUE_NAME, durable=True)
+            print(f"Listening for print jobs on {QUEUE_NAME}...")
+            channel.basic_consume(queue=QUEUE_NAME, on_message_callback=on_message)
+            channel.start_consuming()
+        except pika.exceptions.AMQPConnectionError as e:
+            print(f"RabbitMQ connection error: {e}. Retrying in 10 seconds...")
+            time.sleep(10)
+        except Exception as e:
+            print(f"Unexpected error: {e}. Retrying in 10 seconds...")
+            time.sleep(10)
+
 def main():
     config = load_config()
     base_url = config["base_url"]
@@ -130,13 +148,7 @@ def main():
     PRINTERS = fetch_printers(base_url, token)
     print(f"Available printers by name: {list(PRINTERS.keys())}")
 
-    params = pika.URLParameters(RABBITMQ_URL)
-    connection = pika.BlockingConnection(params)
-    channel = connection.channel()
-    channel.queue_declare(queue=QUEUE_NAME, durable=True)
-    print(f"Listening for print jobs on {QUEUE_NAME}...")
-    channel.basic_consume(queue=QUEUE_NAME, on_message_callback=on_message)
-    channel.start_consuming()
+    start_rabbitmq_consumer(RABBITMQ_URL, QUEUE_NAME)
 
 if __name__ == "__main__":
     main()
