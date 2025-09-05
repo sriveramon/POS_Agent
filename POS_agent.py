@@ -13,6 +13,11 @@ try:
 except ImportError:
     WIN32_AVAILABLE = False
 
+# Globals for config and state
+BASE_URL = None
+PASSWORD = None
+PRINTERS = None
+
 def get_access_token(base_url, password):
     url = f"{base_url}/auth/login"
     payload = {"password": password}
@@ -99,12 +104,25 @@ def print_receipt(text, printer_cfg, printer_id=None):
         return False
 
 def on_message(ch, method, properties, body):
+    global PRINTERS
     try:
         message = json.loads(body)
+        msg_type = message.get("type")
+        action = message.get("action")
+
+        # Reload printer config if printer update/create/delete
+        if msg_type == "printer" and action in ("update", "create", "delete"):
+            print(f"Printer config change detected: {action}. Reloading printers...")
+            token = get_access_token(BASE_URL, PASSWORD)
+            PRINTERS = fetch_printers(BASE_URL, token)
+            print(f"Reloaded printers: {list(PRINTERS.keys())}")
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+            return
+
         printer_id = message.get("printer_id")
         printer_cfg = PRINTERS.get(printer_id)
         if printer_cfg:
-            receipt_text = "\n".join(message["lines"])
+            receipt_text = "\n".join(message.get("lines", []))
             success = print_receipt(receipt_text, printer_cfg, printer_id=printer_id)
             if success:
                 print(f"Printed for printer_id: {printer_id}")
@@ -138,15 +156,15 @@ def start_rabbitmq_consumer(RABBITMQ_URL, QUEUE_NAME):
             time.sleep(10)
 
 def main():
+    global BASE_URL, PASSWORD, PRINTERS
     config = load_config()
-    base_url = config["base_url"]
-    password = config["password"]      # Add password to your config.json or set it in code
+    BASE_URL = config["base_url"]
+    PASSWORD = config["password"]      # Add password to your config.json or set it in code
     RABBITMQ_URL = config["rabbitmq_url"]
     QUEUE_NAME = config["queue_name"]
 
-    token = get_access_token(base_url, password)
-    global PRINTERS
-    PRINTERS = fetch_printers(base_url, token)
+    token = get_access_token(BASE_URL, PASSWORD)
+    PRINTERS = fetch_printers(BASE_URL, token)
     print(f"Available printers by name: {list(PRINTERS.keys())}")
 
     start_rabbitmq_consumer(RABBITMQ_URL, QUEUE_NAME)
