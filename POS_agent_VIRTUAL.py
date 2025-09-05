@@ -79,6 +79,7 @@ def start_rabbitmq_consumer(RABBITMQ_URL, QUEUE_NAME):
     while True:
         try:
             params = pika.URLParameters(RABBITMQ_URL)
+            params.heartbeat = 30 
             connection = pika.BlockingConnection(params)
             channel = connection.channel()
             channel.queue_declare(queue=QUEUE_NAME, durable=True)
