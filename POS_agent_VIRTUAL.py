@@ -36,6 +36,18 @@ def fetch_printers(base_url, token):
         print(f"Failed to fetch printers: {e}")
         sys.exit(1)
 
+def fetch_rabbitmq_info(base_url, token):
+    url = f"{base_url}/auth/rabbitmq"
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        resp = requests.get(url, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+        return data["url"], data["queue_name"]  # only what the consumer needs
+    except Exception as e:
+        print(f"Failed to fetch RabbitMQ info: {e}")
+        sys.exit(1)
+
 def load_config(filename="config.json"):
     exe_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
     path = os.path.join(exe_dir, filename)
@@ -116,12 +128,14 @@ def main():
     config = load_config()
     BASE_URL = config["base_url"]
     PASSWORD = config["password"]
-    RABBITMQ_URL = config["rabbitmq_url"]
-    QUEUE_NAME = config["queue_name"]
 
     token = get_access_token(BASE_URL, PASSWORD)
     PRINTERS = fetch_printers(BASE_URL, token)
     print(f"Available printers by name: {list(PRINTERS.keys())}")
+
+    # Fetch RabbitMQ info dynamically
+    RABBITMQ_URL, QUEUE_NAME = fetch_rabbitmq_info(BASE_URL, token)
+    print(f"Using RabbitMQ URL: {RABBITMQ_URL}, Queue: {QUEUE_NAME}")
 
     start_rabbitmq_consumer(RABBITMQ_URL, QUEUE_NAME)
 
