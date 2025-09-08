@@ -5,6 +5,7 @@ import sys
 import os
 import time
 from escpos.printer import Usb, Network
+from urllib.parse import urlparse, urlunparse
 
 # Windows printer by name (requires pywin32)
 try:
@@ -37,10 +38,21 @@ def fetch_printers(base_url, token):
         resp = requests.get(url, headers=headers)
         resp.raise_for_status()
         printers = resp.json()
-        # Build a dict with printer.name as key, and all printer info as value
         return {p["name"]: p for p in printers}
     except Exception as e:
         print(f"Failed to fetch printers: {e}")
+        sys.exit(1)
+
+def fetch_rabbitmq_info(base_url, token):
+    url = f"{base_url}/auth/rabbitmq"
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        resp = requests.get(url, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+        return data["url"], data["queue_name"]
+    except Exception as e:
+        print(f"Failed to fetch RabbitMQ info: {e}")
         sys.exit(1)
 
 def load_config(filename="config.json"):
@@ -51,7 +63,6 @@ def load_config(filename="config.json"):
             return json.load(f)
     except FileNotFoundError:
         print(f"ERROR: '{filename}' not found in {exe_dir}")
-        print("Please make sure config.json is in the same directory as this program.")
         sys.exit(1)
     except Exception as e:
         print(f"Failed to load '{filename}': {e}")
@@ -61,6 +72,7 @@ def print_receipt(text, printer_cfg, printer_id=None):
     try:
         printer_type = printer_cfg.get("type")
         conn = printer_cfg.get("connection_data", {})
+
         if printer_type == "usb":
             vendor_id = int(conn["vendor_id"], 16)
             product_id = int(conn["product_id"], 16)
@@ -87,8 +99,7 @@ def print_receipt(text, printer_cfg, printer_id=None):
                 hJob = win32print.StartDocPrinter(hPrinter, 1, ("Receipt", None, "RAW"))
                 win32print.StartPagePrinter(hPrinter)
                 win32print.WritePrinter(hPrinter, text.encode("utf-8"))
-                # Cut command for ESC/POS (may need adjustment for your printer)
-                win32print.WritePrinter(hPrinter, b'\x1dV\x00')
+                win32print.WritePrinter(hPrinter, b'\x1dV\x00')  # ESC/POS cut
                 win32print.EndPagePrinter(hPrinter)
                 win32print.EndDocPrinter(hPrinter)
             finally:
@@ -110,7 +121,6 @@ def on_message(ch, method, properties, body):
         msg_type = message.get("type")
         action = message.get("action")
 
-        # Reload printer config if printer update/create/delete
         if msg_type == "printer" and action in ("update", "create", "delete"):
             print(f"Printer config change detected: {action}. Reloading printers...")
             token = get_access_token(BASE_URL, PASSWORD)
@@ -138,6 +148,14 @@ def on_message(ch, method, properties, body):
         ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
 
 def start_rabbitmq_consumer(RABBITMQ_URL, QUEUE_NAME):
+    parsed_url = urlparse(RABBITMQ_URL)
+    if parsed_url.password:
+        safe_netloc = parsed_url.netloc.replace(parsed_url.password, "****")
+        safe_url = urlunparse(parsed_url._replace(netloc=safe_netloc))
+    else:
+        safe_url = RABBITMQ_URL
+    print(f"Using RabbitMQ URL: {safe_url}, Queue: {QUEUE_NAME}")
+
     while True:
         try:
             params = pika.URLParameters(RABBITMQ_URL)
@@ -159,13 +177,13 @@ def main():
     global BASE_URL, PASSWORD, PRINTERS
     config = load_config()
     BASE_URL = config["base_url"]
-    PASSWORD = config["password"]      # Add password to your config.json or set it in code
-    RABBITMQ_URL = config["rabbitmq_url"]
-    QUEUE_NAME = config["queue_name"]
+    PASSWORD = config["password"]
 
     token = get_access_token(BASE_URL, PASSWORD)
     PRINTERS = fetch_printers(BASE_URL, token)
     print(f"Available printers by name: {list(PRINTERS.keys())}")
+
+    RABBITMQ_URL, QUEUE_NAME = fetch_rabbitmq_info(BASE_URL, token)
 
     start_rabbitmq_consumer(RABBITMQ_URL, QUEUE_NAME)
 

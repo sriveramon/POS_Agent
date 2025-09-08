@@ -1,19 +1,5 @@
 {
-  "rabbitmq_url": "",
-  "queue_name": "print_jobs",
-  "printers": {
-    "printer_1": {
-      "type": "bluetooth",
-      "mac_address": "a5:9d:38:19:e5:61"
-    },
-    "printer_2": {
-      "type": "usb",
-      "vendor_id": "0x1234",
-      "product_id": "0xabcd"
-    },
-    "printer_3": {
-      "type": "windows",
-      "name": "POSPrinter"
-    }
-  }
+  "base_url": "",
+  "password": ""
+
 }
