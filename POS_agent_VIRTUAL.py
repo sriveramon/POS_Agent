@@ -5,6 +5,7 @@ import sys
 import os
 import time
 from escpos.printer import Usb, Network
+from urllib.parse import urlparse, urlunparse
 
 # Globals for config and state
 BASE_URL = None
@@ -135,7 +136,16 @@ def main():
 
     # Fetch RabbitMQ info dynamically
     RABBITMQ_URL, QUEUE_NAME = fetch_rabbitmq_info(BASE_URL, token)
-    print(f"Using RabbitMQ URL: {RABBITMQ_URL}, Queue: {QUEUE_NAME}")
+    # Hide password in RabbitMQ URL when printing
+
+    parsed_url = urlparse(RABBITMQ_URL)
+    if parsed_url.password:
+        safe_netloc = parsed_url.netloc.replace(parsed_url.password, "****")
+        safe_url = urlunparse(parsed_url._replace(netloc=safe_netloc))
+    else:
+        safe_url = RABBITMQ_URL
+
+    print(f"Using RabbitMQ URL: {safe_url}, Queue: {QUEUE_NAME}")
 
     start_rabbitmq_consumer(RABBITMQ_URL, QUEUE_NAME)
 
