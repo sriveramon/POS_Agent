@@ -4,15 +4,8 @@ import requests
 import sys
 import os
 import time
-from escpos.printer import Usb, Network
+from pyescpos.printer import Usb, Network, Bluetooth
 from urllib.parse import urlparse, urlunparse
-
-# Try to import Bluetooth printer class if available
-try:
-    from escpos.printer import Bluetooth
-    BLUETOOTH_AVAILABLE = True
-except ImportError:
-    BLUETOOTH_AVAILABLE = False
 
 # Globals for config and state
 BASE_URL = None
@@ -72,6 +65,7 @@ def print_receipt(text, printer_cfg, printer_id=None):
     try:
         printer_type = printer_cfg.get("type")
         conn = printer_cfg.get("connection_data", {})
+
         if printer_type == "usb":
             vendor_id = int(conn["vendor_id"], 16)
             product_id = int(conn["product_id"], 16)
@@ -81,9 +75,6 @@ def print_receipt(text, printer_cfg, printer_id=None):
             port = int(conn.get("port", 9100))
             p = Network(host, port=port)
         elif printer_type == "bluetooth":
-            if not BLUETOOTH_AVAILABLE:
-                print("Bluetooth printer class not available. Install python-escpos with Bluetooth support.")
-                return False
             mac_address = conn.get("mac_address")
             if not mac_address:
                 print("Bluetooth printer: No mac_address provided.")
@@ -94,7 +85,6 @@ def print_receipt(text, printer_cfg, printer_id=None):
             return False
 
         p.text(text)
-        p.set()
         p.cut()
         p.close()
         print(f"Printed on printer '{printer_id}' with config: {printer_cfg}")
