@@ -4,7 +4,9 @@ import requests
 import sys
 import os
 import time
-from pyescpos.printer import Usb, Network, Bluetooth
+from escpos.impl.epson import GenericESCPOS
+from escpos.ifusb import USBConnection
+from escpos import NetworkConnection, BluetoothConnection
 from urllib.parse import urlparse, urlunparse
 
 # Globals for config and state
@@ -64,29 +66,35 @@ def load_config(filename="config.json"):
 def print_receipt(text, printer_cfg, printer_id=None):
     try:
         printer_type = printer_cfg.get("type")
-        conn = printer_cfg.get("connection_data", {})
+        conn_data = printer_cfg.get("connection_data", {})
 
+        # Setup connection
         if printer_type == "usb":
-            vendor_id = int(conn["vendor_id"], 16)
-            product_id = int(conn["product_id"], 16)
-            p = Usb(vendor_id, product_id)
+            vendor_id = int(conn_data["vendor_id"], 16)
+            product_id = int(conn_data["product_id"], 16)
+            interface = int(conn_data.get("interface", 0))
+            ep_out = int(conn_data.get("ep_out", 3))
+            ep_in = int(conn_data.get("ep_in", 0))
+            conn = USBConnection.create(f"{vendor_id:04x}:{product_id:04x},interface={interface},ep_out={ep_out},ep_in={ep_in}")
         elif printer_type == "network":
-            host = conn.get("ip_address") or conn.get("host")
-            port = int(conn.get("port", 9100))
-            p = Network(host, port=port)
+            host = conn_data.get("ip_address") or conn_data.get("host")
+            port = int(conn_data.get("port", 9100))
+            conn = NetworkConnection.create(f"{host}:{port}")
         elif printer_type == "bluetooth":
-            mac_address = conn.get("mac_address")
-            if not mac_address:
-                print("Bluetooth printer: No mac_address provided.")
+            mac = conn_data.get("mac_address")
+            if not mac:
+                print("Bluetooth printer: no MAC address provided")
                 return False
-            p = Bluetooth(mac_address)
+            conn = BluetoothConnection.create(mac)
         else:
             print(f"Unknown printer type: {printer_type}")
             return False
 
-        p.text(text)
-        p.cut()
-        p.close()
+        # Initialize printer (generic Epson implementation)
+        printer = GenericESCPOS(conn)
+        printer.init()
+        printer.text(text)
+        printer.cut()
         print(f"Printed on printer '{printer_id}' with config: {printer_cfg}")
         return True
     except Exception as e:
@@ -114,13 +122,11 @@ def on_message(ch, method, properties, body):
             receipt_text = "\n".join(message.get("lines", []))
             success = print_receipt(receipt_text, printer_cfg, printer_id=printer_id)
             if success:
-                print(f"Printed for printer_id: {printer_id}")
                 ch.basic_ack(delivery_tag=method.delivery_tag)
             else:
-                print(f"Print failed for printer_id: {printer_id}")
                 ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
         else:
-            print(f"Unknown printer_id: {printer_id} -- Skipping")
+            print(f"Unknown printer_id: {printer_id}")
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
     except Exception as e:
         print(f"Error processing message: {e}")
@@ -128,11 +134,10 @@ def on_message(ch, method, properties, body):
 
 def start_rabbitmq_consumer(RABBITMQ_URL, QUEUE_NAME):
     parsed_url = urlparse(RABBITMQ_URL)
+    safe_url = RABBITMQ_URL
     if parsed_url.password:
         safe_netloc = parsed_url.netloc.replace(parsed_url.password, "****")
         safe_url = urlunparse(parsed_url._replace(netloc=safe_netloc))
-    else:
-        safe_url = RABBITMQ_URL
     print(f"Using RabbitMQ URL: {safe_url}, Queue: {QUEUE_NAME}")
 
     while True:
@@ -160,10 +165,9 @@ def main():
 
     token = get_access_token(BASE_URL, PASSWORD)
     PRINTERS = fetch_printers(BASE_URL, token)
-    print(f"Available printers by name: {list(PRINTERS.keys())}")
+    print(f"Available printers: {list(PRINTERS.keys())}")
 
     RABBITMQ_URL, QUEUE_NAME = fetch_rabbitmq_info(BASE_URL, token)
-
     start_rabbitmq_consumer(RABBITMQ_URL, QUEUE_NAME)
 
 if __name__ == "__main__":
