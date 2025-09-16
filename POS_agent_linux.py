@@ -7,7 +7,7 @@ import time
 from urllib.parse import urlparse, urlunparse
 
 # PyESCPOS imports
-from escpos.connection import USBConnection
+from escpos.ifusb import USBConnection
 from escpos import NetworkConnection, BluetoothConnection
 from escpos.impl.epson import GenericESCPOS
 
