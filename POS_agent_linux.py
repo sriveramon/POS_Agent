@@ -7,11 +7,18 @@ import time
 import subprocess
 from escpos.printer import Usb, Network, Serial
 
+# Try to import Bluetooth printer class if available
+try:
+    from escpos.printer import Bluetooth
+    BLUETOOTH_AVAILABLE = True
+except ImportError:
+    BLUETOOTH_AVAILABLE = False
+
 # Globals for config and state
 BASE_URL = None
 PASSWORD = None
 PRINTERS = None
-RFCOMM_BASE = 0  # Base number for /dev/rfcommX
+BLUETOOTH_RFCOMM = {}  # Maps MAC address -> /dev/rfcommX
 
 def get_access_token(base_url, password):
     url = f"{base_url}/auth/login"
@@ -19,7 +26,8 @@ def get_access_token(base_url, password):
     try:
         resp = requests.post(url, json=payload)
         resp.raise_for_status()
-        return resp.json()["access_token"]
+        data = resp.json()
+        return data["access_token"]
     except Exception as e:
         print(f"Failed to login: {e}")
         sys.exit(1)
@@ -49,23 +57,34 @@ def load_config(filename="config.json"):
         print(f"Failed to load '{filename}': {e}")
         sys.exit(1)
 
-def bind_rfcomm(mac_address, rfcomm_index=0, channel=1):
-    rfcomm_device = f"/dev/rfcomm{rfcomm_index}"
-    try:
+def setup_bluetooth_printers():
+    """Bind all Bluetooth printers to /dev/rfcommX once at startup"""
+    global BLUETOOTH_RFCOMM
+    index = 0
+    for printer_id, cfg in PRINTERS.items():
+        if cfg.get("type") != "bluetooth":
+            continue
+        mac_address = cfg.get("connection_data", {}).get("mac_address")
+        if not mac_address:
+            print(f"Bluetooth printer {printer_id} has no MAC address. Skipping.")
+            continue
+        rfcomm_device = f"/dev/rfcomm{index}"
+        # Release if already bound
         if os.path.exists(rfcomm_device):
-            # Release existing binding
             subprocess.run(["sudo", "rfcomm", "release", rfcomm_device], check=False)
-        subprocess.run(
-            ["sudo", "rfcomm", "bind", rfcomm_device, mac_address, str(channel)],
-            check=True
-        )
-        print(f"Bound {mac_address} to {rfcomm_device}")
-        return rfcomm_device
-    except subprocess.CalledProcessError as e:
-        print(f"Failed to bind {mac_address} to {rfcomm_device}: {e}")
-        return None
+        # Bind
+        try:
+            subprocess.run(
+                ["sudo", "rfcomm", "bind", rfcomm_device, mac_address, "1"],
+                check=True
+            )
+            print(f"Bound {mac_address} to {rfcomm_device}")
+            BLUETOOTH_RFCOMM[mac_address] = rfcomm_device
+            index += 1
+        except subprocess.CalledProcessError as e:
+            print(f"Failed to bind {mac_address} to {rfcomm_device}: {e}")
 
-def print_receipt(text, printer_cfg, rfcomm_index=0, printer_id=None):
+def print_receipt(text, printer_cfg, printer_id=None):
     try:
         printer_type = printer_cfg.get("type")
         conn = printer_cfg.get("connection_data", {})
@@ -74,31 +93,35 @@ def print_receipt(text, printer_cfg, rfcomm_index=0, printer_id=None):
             vendor_id = int(conn["vendor_id"], 16)
             product_id = int(conn["product_id"], 16)
             p = Usb(vendor_id, product_id)
+
         elif printer_type == "network":
             host = conn.get("ip_address") or conn.get("host")
             port = int(conn.get("port", 9100))
             p = Network(host, port=port)
+
         elif printer_type == "bluetooth":
             mac_address = conn.get("mac_address")
             if not mac_address:
                 print(f"Bluetooth printer {printer_id}: No MAC address provided.")
                 return False
-
-            rfcomm_device = bind_rfcomm(mac_address, rfcomm_index)
+            rfcomm_device = BLUETOOTH_RFCOMM.get(mac_address)
             if not rfcomm_device:
+                print(f"No RFCOMM device mapped for {mac_address}")
                 return False
-
             p = Serial(devfile=rfcomm_device, baudrate=19200)
+
         else:
             print(f"Unknown printer type: {printer_type}")
             return False
 
+        # Print
         p.text(text)
         p.set()  # Optional: Reset formatting
         p.cut()
         p.close()
         print(f"Printed on printer '{printer_id}' with config: {printer_cfg}")
         return True
+
     except Exception as e:
         print(f"Error printing on printer '{printer_id}': {e}")
         return False
@@ -115,6 +138,7 @@ def on_message(ch, method, properties, body):
             print(f"Printer config change detected: {action}. Reloading printers...")
             token = get_access_token(BASE_URL, PASSWORD)
             PRINTERS = fetch_printers(BASE_URL, token)
+            setup_bluetooth_printers()  # Rebind Bluetooth printers
             print(f"Reloaded printers: {list(PRINTERS.keys())}")
             ch.basic_ack(delivery_tag=method.delivery_tag)
             return
@@ -123,12 +147,12 @@ def on_message(ch, method, properties, body):
         printer_cfg = PRINTERS.get(printer_id)
         if printer_cfg:
             receipt_text = "\n".join(message.get("lines", []))
-            # Assign a unique rfcomm index based on printer_id
-            rfcomm_index = hash(printer_id) % 10  # Supports up to 10 devices (/dev/rfcomm0-9)
-            success = print_receipt(receipt_text, printer_cfg, rfcomm_index=rfcomm_index, printer_id=printer_id)
+            success = print_receipt(receipt_text, printer_cfg, printer_id=printer_id)
             if success:
+                print(f"Printed for printer_id: {printer_id}")
                 ch.basic_ack(delivery_tag=method.delivery_tag)
             else:
+                print(f"Print failed for printer_id: {printer_id}")
                 ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
         else:
             print(f"Unknown printer_id: {printer_id} -- Skipping")
@@ -141,7 +165,7 @@ def start_rabbitmq_consumer(RABBITMQ_URL, QUEUE_NAME):
     while True:
         try:
             params = pika.URLParameters(RABBITMQ_URL)
-            params.heartbeat = 30
+            params.heartbeat = 30 
             connection = pika.BlockingConnection(params)
             channel = connection.channel()
             channel.queue_declare(queue=QUEUE_NAME, durable=True)
@@ -166,6 +190,9 @@ def main():
     token = get_access_token(BASE_URL, PASSWORD)
     PRINTERS = fetch_printers(BASE_URL, token)
     print(f"Available printers by name: {list(PRINTERS.keys())}")
+
+    # Bind Bluetooth printers at startup
+    setup_bluetooth_printers()
 
     start_rabbitmq_consumer(RABBITMQ_URL, QUEUE_NAME)
 
